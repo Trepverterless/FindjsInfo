@@ -124,7 +124,7 @@ class JSINFO:
             (?:"|')                               # End newline delimiter
 		"""
         self.link_pattern = re.compile(link_pattern, re.VERBOSE)
-        self.js_pattern = 'src=["\'](.*?)["\']'
+        self.js_pattern =  '<script[^<>]*?src="?(.*?\.js)"?[^<>]*?>.*?<\/script>'      #'src=["\'](.*?)["\']'
         self.href_pattern = 'href=["\'](.*?)["\']'
         self.leak_info_patterns = {'mail': r'([-_a-zA-Z0-9\.]{1,64}@%s)', 'author': '@author[: ]+(.*?) ',
                                    'accesskey_id': 'accesskeyid.*?["\'](.*?)["\']',
@@ -280,10 +280,6 @@ class JSINFO:
             js_texts = re.findall('<script>(.*?)<\/script>', resp)
         except TypeError:
             js_texts = []
-        try:
-            js_srcs = re.findall('<script[^<>]*?src=(.*?\.js)[^<>]*?>.*?<\/script>', resp)
-        except TypeError:
-            js_srcs = []
 
         """获取完整的url"""
         parse_url = urlparse(url)
@@ -293,10 +289,6 @@ class JSINFO:
                 continue
         for js_url in js_urls:
             full_js_url = await self.extract_link(parse_url, js_url,isfirst)
-            if full_js_url is False:
-                continue
-        for js_src in js_srcs:
-            full_js_url = await self.extract_link(parse_url, js_src,isfirst)
             if full_js_url is False:
                 continue
         for js_text in js_texts:
