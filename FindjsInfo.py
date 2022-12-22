@@ -47,13 +47,16 @@ class JSINFO:
         """初始化参数"""
         self.queue = Queue()
         self.root_domains = []
+
+        self.timeout = 10    #设置请求超时时间
       
         self.scan_newdomain = args.scan_newdomain
-        self.skip_sub = True #args.skip_sub    
+        self.skip_sub = args.skip_sub    
         self.scan_leak = args.scan_leak
         self.scan_deep = args.scan_deep
         # self.only_this = True #args.only_this
         target = args.target
+       
         if not target.startswith(('http://', 'https://')) and not os.path.isfile(target):
             target = 'http://' + target
         elif os.path.isfile(target):
@@ -178,6 +181,7 @@ class JSINFO:
         print(banner)
 
     def start(self):
+        firstpage = True
         loop = asyncio.get_event_loop()
         while self.queue.qsize() > 0:
             try:
@@ -193,7 +197,9 @@ class JSINFO:
                         if file_extend == 'js':      
                             tasks.append(asyncio.ensure_future(self.FindLinkInJs(url)))
                         else:
-                            tasks.append(asyncio.ensure_future(self.FindLinkInPage(url)))
+                            tasks.append(asyncio.ensure_future(self.FindLinkInPage(url,firstpage)))
+                            if firstpage == True:
+                                firstpage == False
                         i += 1
                     """开始跑异步任务"""
                     if tasks:
@@ -201,7 +207,8 @@ class JSINFO:
                     logger.info('-' * 20)
                     logger.info('[+]root domain count ==> {}'.format(len(self.root_domains)))
                     logger.info('[+]sub domain count ==> {}'.format(len(self.sub_domains)))
-                    logger.info('[+]api count ==> {}'.format(len(self.jsnum)))
+                    logger.info('[+]js count ==> {}'.format(len(self.jsnum)))
+                    logger.info('[+]api count ==> {}'.format(self.apinum))
                     logger.info('[+]leakinfos count ==> {}'.format(len(self.leak_infos)))
                     logger.info('-' * 20)
             except KeyboardInterrupt:
@@ -246,7 +253,7 @@ class JSINFO:
         logger.info('[+]Apis ==> {}'.format(now_time + '_apis'))
         logger.info('[+]LeakInfos ==> {}'.format(now_time + '_leakinfos'))
 
-    async def FindLinkInPage(self, url):   # 在页面中查找信息
+    async def FindLinkInPage(self, url,isfirst):   # 在页面中查找信息
         """发起请求"""
         try:
             resp = await self.send_request(url)
@@ -281,20 +288,20 @@ class JSINFO:
         """获取完整的url"""
         parse_url = urlparse(url)
         for href in hrefs:
-            full_href_url = await self.extract_link(parse_url, href)
+            full_href_url = await self.extract_link(parse_url, href,isfirst)
             if full_href_url is False:
                 continue
         for js_url in js_urls:
-            full_js_url = await self.extract_link(parse_url, js_url)
+            full_js_url = await self.extract_link(parse_url, js_url,isfirst)
             if full_js_url is False:
                 continue
         for js_src in js_srcs:
-            full_js_url = await self.extract_link(parse_url, js_src)
+            full_js_url = await self.extract_link(parse_url, js_src,isfirst)
             if full_js_url is False:
                 continue
         for js_text in js_texts:
             await self.FindLinkInJsText(url, js_text)
-        logger.info('Find page:{}'.format(url))
+        logger.info('Find new page:{}'.format(url))
 
     async def FindLinkInJs(self, url):    #在js文件进行查找
         resp = await self.send_request(url)
@@ -314,7 +321,7 @@ class JSINFO:
             full_api_url = await self.extract_link(urlparse(url), match)
             if full_api_url is False:
                 continue
-        logger.info('find js:{}'.format(url))
+        logger.info('Find new js:{}'.format(url))
 
     async def FindLinkInJsText(self, url, text):            #在匹配的<script>文本中查找link
         try:
@@ -334,8 +341,8 @@ class JSINFO:
         try:
             async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
                 async with sem:
-                    async with session.get(url, timeout=20, headers=self.headers) as req:
-                        await asyncio.sleep(1)
+                    async with session.get(url, timeout=self.timeout, headers=self.headers) as req:
+                        # await asyncio.sleep(1)
                         response = await req.text('utf-8', 'ignore')
                         req.close()
                         return response
@@ -372,13 +379,9 @@ class JSINFO:
                 format_filename += split_name
         return parse_link.scheme + '://' + parse_link.netloc + parse_link.path.replace(filename, format_filename)
 
-    async def extract_link(self, parse_url, link):
-        """html解码"""
-        link = unescape(link)
-        """判断后缀是否在黑名单中"""
+    def tofullurl(self, parse_url, link):    #转换查找的路径，拼接成完整路径
         filename = os.path.basename(link)
         file_extend = self.get_file_extend(filename)
-        is_link = False
         if link.startswith(('http://', 'https://')) and file_extend not in self.black_extend_list:
             full_url = link
         elif link.startswith('javascript:'):
@@ -396,8 +399,19 @@ class JSINFO:
             else:
                 full_url = parse_url.scheme + '://' + parse_url.netloc + os.path.dirname(parse_url.path) + link[1:]
         else:
-            full_url = parse_url.scheme + '://' + parse_url.netloc + parse_url.path + '/' + link
+            full_url = parse_url.scheme + '://' + parse_url.netloc + os.path.dirname(parse_url.path) + '/' + link
+        return full_url,filename
 
+    async def extract_link(self, parse_url, link,isfirst=False):
+        """html解码"""
+        link = unescape(link)
+        """判断后缀是否在黑名单中"""
+
+        is_link = False
+        full_url,filename = self.tofullurl(parse_url,link)
+        file_extend = self.get_file_extend(filename)
+        if file_extend in self.black_extend_list:    
+            return False
 
         """解析爬取到链接的域名和根域名"""
         extract_full_url_domain = extract(full_url)
@@ -405,7 +419,7 @@ class JSINFO:
         sub_domain = urlparse(full_url).netloc
         """判断爬取到的链接是否满足keyword"""
         in_keyword = False
-        for keyword in self.keywords:
+        for keyword in self.keywords:    #判断是否在root根域名中
             if keyword in root_domain:
                 in_keyword = True
         if not in_keyword:
@@ -439,12 +453,11 @@ class JSINFO:
                 pass
         finally:
             self._value_lock.release()
-        if file_extend in self.black_extend_list:
-            return False
+
         if is_link is True:
             return link
         try:         
-            self._value_lock.acquire()
+            #self._value_lock.acquire()
             if full_url not in self.jsnum and file_extend != 'html' and file_extend != 'js':
                 domain_rul = parse_url.scheme + '://' + parse_url.netloc + parse_url.path 
                 titile,sCode,state,isapi = await self.getUrlStatus(full_url)    #检测api访问响应状态
@@ -452,21 +465,25 @@ class JSINFO:
                 if domain_rul in self.jsnum:
                     self.jsnum[domain_rul].append(tmp)     #记录api
                     self.apinum += 1
+                    #logger.info('[+]api count ==> {}'.format(self.apinum))
                 else:
                     self.jsnum[domain_rul] = [tmp]
                 # logger.info('[+]Find a new api in {}'.format(parse_url.netloc))
+        except Exception as e:
+            logger.warning(e)
         finally:
-            self._value_lock.release()
+            pass
+            #self._value_lock.release()
 
         format_url = self.get_format_url(urlparse(full_url), filename, file_extend)
 
         try:
             self._value_lock.acquire()       #添加新的递归查询页面
             if format_url not in self.extract_urls:
-                if (self.scan_deep == True) or (link.startswith(('http://', 'https://'))):     
+                if (self.scan_deep == True) or (link.startswith(('http://', 'https://'))) or (isfirst==True):     
                     self.extract_urls.append(format_url)
                     self.queue.put(full_url)                 
-                    logger.info('Find new link:  {}'.format(full_url))
+                    logger.info('Find new link:  {}'.format(full_url))                   
                     
         finally:
             self._value_lock.release()
@@ -499,37 +516,35 @@ class JSINFO:
             self._value_lock.release()
 
     async def getUrlStatus(self,url):   #验证接口信息
-        MyUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.150 Safari/537.36"   
-        headers = {'User-Agent': MyUa}
-
+ 
         sem = asyncio.Semaphore(1024)
         try:
             async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
                 async with sem:
-                    async with session.get(url, timeout=20, headers=headers) as req:
-                        await asyncio.sleep(1)
-                        res = await req.text()    
+                    async with session.get(url, timeout=self.timeout, headers=self.headers) as req:
+                        #await asyncio.sleep(1)
+                        res = await req.text()   
+
+                        sCode = req.status
+                        bodySize = len(res)
+                        req.close()
+
+                        r = BeautifulSoup(res,"html.parser") 
+                        if r.title:
+                            title = r.title.string
+                        else:
+                            title = "N/A"
 
         except	Exception as result:
             
             logger.warning(result)
             return 'erro','erro','erro',False
         
-        r = BeautifulSoup(res,"html.parser")
-
-        sCode = req.status
-        if r.title:
-            title = r.title.string
-        else:
-            title = "N/A"
-
-        bodySize = req.content_length
-
         if '{"' == res[0:2]:
             apiData = True
         else:
             apiData = False
-        req.close()
+        
      
         return title,sCode,bodySize,apiData
 
