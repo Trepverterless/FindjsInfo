@@ -35,6 +35,7 @@ class JSINFO:
         parser.add_argument('--scan_leak', help='scan leak find',action="store_true")
         parser.add_argument('--scan_newdomain', help='scan finded newdomain',action="store_true")
         parser.add_argument('--scan_deep', help='scan all find link',action="store_true")
+        parser.add_argument('--skip_check', help='skip api status check',action="store_true")
         # parser.add_argument('--only_this', help='only scan this domain and under  ',action="store_true")
         args = parser.parse_args()
         return args
@@ -54,6 +55,7 @@ class JSINFO:
         self.skip_sub = args.skip_sub    
         self.scan_leak = args.scan_leak
         self.scan_deep = args.scan_deep
+        self.skip_check = args.skip_check
         # self.only_this = True #args.only_this
         target = args.target
        
@@ -222,6 +224,12 @@ class JSINFO:
         logger.info('[+]All js count ==> {}'.format(len(self.jsnum)))
         logger.info('[+]All api count ==> {}'.format(self.apinum))
         logger.info('[+]All leakinfos count ==> {}'.format(len(self.leak_infos)))
+
+        # for i in self.jsnum:
+        #     for j in self.jsnum[i]:
+        #         tasks.append(asyncio.ensure_future(self.getUrlStatus(j)))
+        # loop.run_until_complete(asyncio.wait(tasks))
+
 
         now_time = str(int(time.time()))
         with open(now_time + '_rootdomain', 'a+', encoding='utf-8') as f:     #输出结果到文件
@@ -452,7 +460,10 @@ class JSINFO:
             #self._value_lock.acquire()
             if full_url not in self.jsnum and file_extend != 'html' and file_extend != 'js':
                 domain_rul = parse_url.scheme + '://' + parse_url.netloc + parse_url.path 
-                titile,sCode,state,isapi = await self.getUrlStatus(full_url)    #检测api访问响应状态
+                if self.skip_check == False:
+                    titile,sCode,state,isapi = await self.getUrlStatus(full_url)    #检测api访问响应状态
+                else:
+                    titile,sCode,state,isapi = 'N/A','N/A','N/A','N/A'
                 tmp = [full_url,titile,sCode,state,isapi]
                 if domain_rul in self.jsnum:
                     self.jsnum[domain_rul].append(tmp)     #记录api
