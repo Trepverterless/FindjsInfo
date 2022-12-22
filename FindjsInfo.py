@@ -28,12 +28,14 @@ class JSINFO:
                                                      'expand the scope of your assets.',
                                          epilog='\tUsage:\npython ' + sys.argv[
                                              0] + " --target www.baidu.com --keywords baidu")
-        parser.add_argument('--target', help='A target like www.example.com or subdomains.txt')
+        parser.add_argument('--target', help='A target like www.example.com or subdomains.txt',required=True)
         parser.add_argument('--keywords', help='Keyword will be split in "," to extract subdomain')
         parser.add_argument('--black_keywords', help='Black keywords in html source')
         parser.add_argument('--skip_sub', help='skip subdomain find',action="store_true")
         parser.add_argument('--scan_leak', help='scan leak find',action="store_true")
-        parser.add_argument('--scan_newdomain', help='skip newdomain find',action="store_true")
+        parser.add_argument('--scan_newdomain', help='scan finded newdomain',action="store_true")
+        parser.add_argument('--scan_deep', help='scan all find link',action="store_true")
+        # parser.add_argument('--only_this', help='only scan this domain and under  ',action="store_true")
         args = parser.parse_args()
         return args
 
@@ -47,8 +49,10 @@ class JSINFO:
         self.root_domains = []
       
         self.scan_newdomain = args.scan_newdomain
-        self.skip_sub = args.skip_sub    
+        self.skip_sub = True #args.skip_sub    
         self.scan_leak = args.scan_leak
+        self.scan_deep = args.scan_deep
+        # self.only_this = True #args.only_this
         target = args.target
         if not target.startswith(('http://', 'https://')) and not os.path.isfile(target):
             target = 'http://' + target
@@ -85,7 +89,8 @@ class JSINFO:
             self.queue.put(target)
 
         """最终返回的信息列表"""
-        self.apis = {}
+        self.jsnum = {}
+        self.apinum = 0
         self.sub_domains = []
 
         self.headers = {
@@ -176,7 +181,7 @@ class JSINFO:
         loop = asyncio.get_event_loop()
         while self.queue.qsize() > 0:
             try:
-                while not self.queue.empty():
+                while not self.queue.empty():   #对页面信息进行递归扫描提取api
                     tasks = []
                     i = 0
                     while i < 50 and not self.queue.empty():
@@ -196,7 +201,7 @@ class JSINFO:
                     logger.info('-' * 20)
                     logger.info('[+]root domain count ==> {}'.format(len(self.root_domains)))
                     logger.info('[+]sub domain count ==> {}'.format(len(self.sub_domains)))
-                    logger.info('[+]api count ==> {}'.format(len(self.apis)))
+                    logger.info('[+]api count ==> {}'.format(len(self.jsnum)))
                     logger.info('[+]leakinfos count ==> {}'.format(len(self.leak_infos)))
                     logger.info('-' * 20)
             except KeyboardInterrupt:
@@ -207,11 +212,12 @@ class JSINFO:
 
         logger.info('[+]All root domain count ==> {}'.format(len(self.root_domains)))
         logger.info('[+]All sub domain count ==> {}'.format(len(self.sub_domains)))
-        logger.info('[+]All api count ==> {}'.format(len(self.apis)))
+        logger.info('[+]All js count ==> {}'.format(len(self.jsnum)))
+        logger.info('[+]All api count ==> {}'.format(self.apinum))
         logger.info('[+]All leakinfos count ==> {}'.format(len(self.leak_infos)))
 
         now_time = str(int(time.time()))
-        with open(now_time + '_rootdomain', 'a+', encoding='utf-8') as f:
+        with open(now_time + '_rootdomain', 'a+', encoding='utf-8') as f:     #输出结果到文件
             for i in self.root_domains:
                 f.write(i.strip() + '\n')
 
@@ -219,12 +225,14 @@ class JSINFO:
             for i in self.sub_domains:
                 f.write(i.strip() + '\n')
 
-        with open(now_time + '_apis', 'a+', encoding='utf-8') as f:
-            for j in self.apis:
+        with open(now_time + '_apis', 'a+', encoding='utf-8') as f:   
+            for j in self.jsnum:
                 f.write(j.strip() + '\n'+'='*60+'\n')
-                for i in self.apis[j]:
-                    
-                    f.write('{}      |  title: {}   status:{}    body_size: {}    is_api: {} '.format(str(i[0]).strip(),str(i[1]),str(i[2]),str(i[3]),str(i[4])))
+                for i in self.jsnum[j]:
+                    if len(str(i[0])) >100:
+                        f.write('{}    title: {}   status:{}    body_size: {}    is_api: {} '.format(str(i[0]).strip(),str(i[1]),str(i[2]),str(i[3]),str(i[4])))
+                    else:
+                        f.write('{:<100s}    title: {}   status:{}    body_size: {}    is_api: {} '.format(str(i[0]).strip(),str(i[1]),str(i[2]),str(i[3]),str(i[4])))
                     f.write('\n')
                 f.write('\n\n')
 
@@ -238,7 +246,7 @@ class JSINFO:
         logger.info('[+]Apis ==> {}'.format(now_time + '_apis'))
         logger.info('[+]LeakInfos ==> {}'.format(now_time + '_leakinfos'))
 
-    async def FindLinkInPage(self, url):
+    async def FindLinkInPage(self, url):   # 在页面中查找信息
         """发起请求"""
         try:
             resp = await self.send_request(url)
@@ -251,6 +259,7 @@ class JSINFO:
                 if black_keyword in resp:
                     return False
         self.find_leak_info(url, resp)  # 探测敏感信息
+
         """从页面中获取href以及js_urls"""
         try:
             hrefs = re.findall(self.href_pattern, resp)
@@ -261,9 +270,13 @@ class JSINFO:
         except TypeError:
             js_urls = []
         try:
-            js_texts = re.findall('<script>(.*?)</script>', resp)
+            js_texts = re.findall('<script>(.*?)<\/script>', resp)
         except TypeError:
             js_texts = []
+        try:
+            js_srcs = re.findall('<script[^<>]*?src=(.*?\.js)[^<>]*?>.*?<\/script>', resp)
+        except TypeError:
+            js_srcs = []
 
         """获取完整的url"""
         parse_url = urlparse(url)
@@ -275,8 +288,13 @@ class JSINFO:
             full_js_url = await self.extract_link(parse_url, js_url)
             if full_js_url is False:
                 continue
+        for js_src in js_srcs:
+            full_js_url = await self.extract_link(parse_url, js_src)
+            if full_js_url is False:
+                continue
         for js_text in js_texts:
-            self.FindLinkInJsText(url, js_text)
+            await self.FindLinkInJsText(url, js_text)
+        logger.info('Find page:{}'.format(url))
 
     async def FindLinkInJs(self, url):    #在js文件进行查找
         resp = await self.send_request(url)
@@ -296,8 +314,9 @@ class JSINFO:
             full_api_url = await self.extract_link(urlparse(url), match)
             if full_api_url is False:
                 continue
+        logger.info('find js:{}'.format(url))
 
-    async def FindLinkInJsText(self, url, text):            #在html文件中查找
+    async def FindLinkInJsText(self, url, text):            #在匹配的<script>文本中查找link
         try:
             link_finder_matchs = re.finditer(self.link_pattern, str(text))
         except:
@@ -371,9 +390,15 @@ class JSINFO:
         elif link.startswith('/'):
             full_url = parse_url.scheme + '://' + parse_url.netloc + link
         elif link.startswith('./'):
-            full_url = parse_url.scheme + '://' + parse_url.netloc + parse_url.path + link[1:]
+            if parse_url.path[-1:] == '/':
+                parse_url
+                full_url = parse_url.scheme + '://' + parse_url.netloc + parse_url.path + link[1:]
+            else:
+                full_url = parse_url.scheme + '://' + parse_url.netloc + os.path.dirname(parse_url.path) + link[1:]
         else:
             full_url = parse_url.scheme + '://' + parse_url.netloc + parse_url.path + '/' + link
+
+
         """解析爬取到链接的域名和根域名"""
         extract_full_url_domain = extract(full_url)
         root_domain = extract_full_url_domain.domain + '.' + extract_full_url_domain.suffix
@@ -418,16 +443,17 @@ class JSINFO:
             return False
         if is_link is True:
             return link
-        try:
+        try:         
             self._value_lock.acquire()
-            if full_url not in self.apis and file_extend != 'html' and file_extend != 'js':
+            if full_url not in self.jsnum and file_extend != 'html' and file_extend != 'js':
                 domain_rul = parse_url.scheme + '://' + parse_url.netloc + parse_url.path 
                 titile,sCode,state,isapi = await self.getUrlStatus(full_url)    #检测api访问响应状态
                 tmp = [full_url,titile,sCode,state,isapi]
-                if domain_rul in self.apis:
-                    self.apis[domain_rul].append(tmp)     #记录api
+                if domain_rul in self.jsnum:
+                    self.jsnum[domain_rul].append(tmp)     #记录api
+                    self.apinum += 1
                 else:
-                    self.apis[domain_rul] = [tmp]
+                    self.jsnum[domain_rul] = [tmp]
                 # logger.info('[+]Find a new api in {}'.format(parse_url.netloc))
         finally:
             self._value_lock.release()
@@ -435,10 +461,13 @@ class JSINFO:
         format_url = self.get_format_url(urlparse(full_url), filename, file_extend)
 
         try:
-            self._value_lock.acquire()
+            self._value_lock.acquire()       #添加新的递归查询页面
             if format_url not in self.extract_urls:
-                self.extract_urls.append(format_url)
-                self.queue.put(full_url)
+                if (self.scan_deep == True) or (link.startswith(('http://', 'https://'))):     
+                    self.extract_urls.append(format_url)
+                    self.queue.put(full_url)                 
+                    logger.info('Find new link:  {}'.format(full_url))
+                    
         finally:
             self._value_lock.release()
 
