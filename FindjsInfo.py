@@ -82,9 +82,10 @@ class JSINFO:
         self.black_extend_list = ['png', 'jpg', 'gif', 'jpeg', 'ico', 'svg', 'bmp', 'mp3', 'mp4', 'avi', 'mpeg', 'mpg',
                                   'mov', 'zip', 'rar', 'tar', 'gz', 'mpeg', 'mkv', 'rmvb', 'iso', 'css', 'txt', 'ppt',
                                   'dmg', 'app', 'exe', 'pem', 'doc', 'docx', 'pkg', 'pdf', 'xml', 'eml''ini', 'so',
-                                  'vbs', 'json', 'webp', 'woff', 'ttf', 'otf', 'log', 'image', 'map', 'woff2', 'mem',
+                                  'vbs', 'webp', 'woff', 'ttf', 'otf', 'log', 'image', 'map', 'woff2', 'mem',
                                   'wasm', 'pexe', 'nmf']
         self.black_filename_list = ['jquery', 'bootstrap', 'react', 'vue', 'google-analytics']
+        self.black_file_extend = ['js']  #'['html','js']
         self.extract_urls = []
         self._value_lock = threading.Lock()
         self.leak_infos = []  # 存储元祖，每个元素对应为：敏感信息正则名称、敏感信息值、敏感信息来源页面
@@ -247,7 +248,7 @@ class JSINFO:
                     if len(str(i[0])) >100:
                         f.write('{}    title: {}   status:{}    body_size: {}    is_api: {} '.format(str(i[0]).strip(),str(i[1]),str(i[2]),str(i[3]),str(i[4])))
                     else:
-                        f.write('{:<100s}    title: {}   status:{}    body_size: {}    is_api: {} '.format(str(i[0]).strip(),str(i[1]),str(i[2]),str(i[3]),str(i[4])))
+                        f.write('{:<100s}    title: {:<20s}   status:{}    body_size: {}    is_api: {} '.format(str(i[0]).strip(),str(i[1]),str(i[2]),str(i[3]),str(i[4])))
                     f.write('\n')
                 f.write('\n\n')
 
@@ -394,7 +395,6 @@ class JSINFO:
             full_url = parse_url.scheme + '://' + parse_url.netloc + link
         elif link.startswith('./'):
             if parse_url.path[-1:] == '/':
-                parse_url
                 full_url = parse_url.scheme + '://' + parse_url.netloc + parse_url.path + link[1:]
             else:
                 full_url = parse_url.scheme + '://' + parse_url.netloc + os.path.dirname(parse_url.path) + link[1:]
@@ -458,7 +458,7 @@ class JSINFO:
             return link
         try:         
             #self._value_lock.acquire()
-            if full_url not in self.jsnum and file_extend != 'html' and file_extend != 'js':
+            if full_url not in self.jsnum and file_extend not in self.black_file_extend:
                 domain_rul = parse_url.scheme + '://' + parse_url.netloc + parse_url.path 
                 if self.skip_check == False:
                     titile,sCode,state,isapi = await self.getUrlStatus(full_url)    #检测api访问响应状态
@@ -543,7 +543,7 @@ class JSINFO:
             logger.warning(result)
             return 'erro','erro','erro',False
         
-        if '{"' == res[0:2]:
+        if '{' in res[0:4]:
             apiData = True
         else:
             apiData = False
